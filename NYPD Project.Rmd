@@ -1,0 +1,137 @@
+---
+title: "NYPD Shooting Incident Assignment"
+author: "Bryce Dolata"
+date: "November 30, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Project Outline
+
+This assignment involves a data set from the NYPD on shootings that occured between 2006 and 2020. There is information on where (borough, precinct, geographical coordinates), when, who (race and age of victim and perp), and the outcome (murder or not).
+
+This doccument will load and clean the data, present a couple visualizations and commentary, and lastly indentify potential sources of bias. 
+
+```{r import and tidy}
+#imports csv from website
+shootingData <- data.frame(read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"))
+
+#selecting columns needed for analysis (date and lat/long)
+shootingData <- select(shootingData, OCCUR_DATE, Latitude, Longitude)
+
+#converting character variable to date
+shootingData$OCCUR_DATE <- as.Date(shootingData$OCCUR_DATE, "%m/%d/%Y")
+
+#adding variable to count shootings
+shootingData$shootingCount <- 1
+
+#checking for missing data
+summary(shootingData)
+```
+Looks ready to plot and model.
+
+
+## Time Visualization
+
+First let's look how shootings are broken up over time. This will help us identify if there is any seasonality within the year. By plotting multiple years we will also be able to see if there are increasing or decreasing trends in the number of shootings year over year.
+
+```{r time visual}
+
+#adding year and week variables for easy manipulation
+shootingData$month <- strftime(shootingData$OCCUR_DATE, format = "%m")
+shootingData$year <- strftime(shootingData$OCCUR_DATE, format = "%Y")
+
+#aggregate shootings so each line is one week
+monthlyAggregation <- shootingData %>% 
+  group_by(month, year) %>% 
+  summarise(shootings = sum(shootingCount), .groups = 'drop')
+
+#delete more than 5 years past
+monthlyAggregation <- filter(monthlyAggregation, year > 2015)
+
+#plot
+ggplot(data = monthlyAggregation) + 
+  geom_point(aes(x = month, y = shootings, color = year))
+
+#remove monthly aggregation data set
+rm(monthlyAggregation)
+```
+
+Two things that I notice is how much 2020 (purple dots) shootings exceed the previous years and how the summers seem to have an upswing and the winters a downswing in the total number of shootings.
+
+
+## Geographic Visualization
+
+Next I want to plot the locations of the shootings on a map of New York City. This will help us identify if there are certain areas where shootings are more common. 
+
+```{r map visual}
+#limit to the current year to focus on recent events
+recent <- filter(shootingData, year > 2019)
+
+#load ggmap
+library(ggmap)
+
+#plot
+qmplot(Longitude, Latitude, data = recent, maptype = "toner-lite", color = I("red"))
+
+#remove data set
+rm(recent)
+```
+
+We can see from this visualization that most of the shootings in New York happen in east side of Brooklyn/south side of Queens or in the Bronx/Harlem area.
+
+
+## Model
+
+Due to the observed seasonality of the shootings, I am curious if the temperature is coorelated with the number of shootings. Below I will build a simple linear model to see if these two numerical variables are related.
+
+To do this, I found a data set from NOAA with average daily temperature. I was only allowed to download ten years of history so I will use that length.
+
+```{r temperature model}
+
+#load in data set with temperature 
+temperatureData <- read_csv("C:/Users/bryce/Downloads/2812453.csv")
+
+#set date varible to date type
+temperatureData$DATE <- substr(temperatureData$DATE,1,10)
+temperatureData$DATE <- as.Date(temperatureData$DATE, "%Y-%m-%d")
+
+#drop variables no longer needed
+shootingData <- select(shootingData, OCCUR_DATE, shootingCount)
+temperatureData <- select(temperatureData, DATE, DailyAverageDryBulbTemperature)
+
+#eliminate hourly readings
+temperatureData <- filter(temperatureData, DailyAverageDryBulbTemperature > 0)
+
+#aggregate daily
+dailyAggregation <- shootingData %>% 
+  group_by(OCCUR_DATE) %>% 
+  summarise(shootings = sum(shootingCount))
+
+#merge temperature and shooting data then remove temperature
+dailyAggregation <-  merge(temperatureData, dailyAggregation, by.x = "DATE", by.y = "OCCUR_DATE", all.x = TRUE)
+rm(temperatureData)
+
+#replace NA with 0s
+dailyAggregation[is.na(dailyAggregation)] <- 0
+
+#create the lineaer regression
+lmTempShooting = lm(shootings~DailyAverageDryBulbTemperature, data = dailyAggregation) 
+
+#look at summary of model
+summary(lmTempShooting)
+```
+
+The results of the linear model show us that this is indeed a significant relationship between temperature and the number of shootings. We can see this my the extremely low p-value (anything under .05 is considered significant).
+
+However, there is also a low R-squared, which means that temperature only explains about 9% of the variation in the number of shootings. This means that while temperature and shootings are highly coorelated, there are many other things that impact the amount of shootings in a given day, so trying to predict number of shootings on a day based off the temperature would be worthless.
+
+## Bias
+
+ There are two major sources of bias I can see in this data. The first is that we have no measure of population count so high number of shootings may just be where the population is the most dense. The second is that policing may not be similar across all neighborhoods so these records of shootings may not capture every real life event. For example, if a neighborhood had a bad realtionship with the police the residents may be less likely to report a shooting to the police.
+ 
+ 
